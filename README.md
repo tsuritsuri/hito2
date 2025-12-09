@@ -3,10 +3,10 @@ Benchmark de programas de docking y protocolos integrados con aprendizaje profun
 
 Este repositorio contiene los datos, scripts y resultados del Trabajo Docente Investigativo realizado como parte del Grado de Licenciado en Bioingeniería Médica en la Universidad Católica del Maule, Facultad de Medicina, Escuela de Bioingeniería Médica.
 
-Autor: David R. Alarcón Muñoz
-Profesor Guía: Dr. Daniel M. Bustos Guajardo
-Profesor Co-Guía: Dra (c) Elizabeth C. Valdés Muñoz
-Año: 2025
+Autor: David R. Alarcón Muñoz \n 
+Profesor Guía: Dr. Daniel M. Bustos Guajardo \n 
+Profesor Co-Guía: Dra (c) Elizabeth C. Valdés Muñoz \n 
+Año: 2025 \n 
 
 📌 Resumen del Proyecto
 Este proyecto tuvo como objetivo comparar de manera sistemática el desempeño de técnicas de docking convencionales (AutoDock 4, AutoDock Vina, Glide) e integradas con inteligencia artificial (GNINA, GNINA CNN) en la predicción de afinidades de inhibidores de ureasa de Helicobacter pylori, un blanco terapéutico clave para el tratamiento de úlceras pépticas y cáncer gástrico.
