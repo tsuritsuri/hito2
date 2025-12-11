@@ -1,6 +1,6 @@
-Hito 2
+**Hito 2**
 
-Benchmark de programas de docking y protocolos integrados con aprendizaje profundo en inhibidores de ureasa de Helicobacter pylori
+***Benchmark* de programas de *docking* y protocolos integrados con aprendizaje profundo en inhibidores de ureasa de *Helicobacter pylori***
 
 Este repositorio contiene los datos, scripts y resultados del Trabajo Docente Investigativo realizado como parte del Grado de Licenciado en Bioingeniería Médica en la Universidad Católica del Maule, Facultad de Medicina, Escuela de Bioingeniería Médica.
 
@@ -12,13 +12,13 @@ Profesor Co-Guía: Dra (c) Elizabeth C. Valdés Muñoz
 
 Año: 2025 
 
-📌 Resumen del Proyecto
+📌 **Resumen del Proyecto**
 
 Este proyecto tuvo como objetivo comparar de manera sistemática el desempeño de técnicas de docking convencionales (AutoDock 4, AutoDock Vina, Glide) e integradas con inteligencia artificial (GNINA, GNINA CNN) en la predicción de afinidades de inhibidores de ureasa de Helicobacter pylori, un blanco terapéutico clave para el tratamiento de úlceras pépticas y cáncer gástrico.
 
 Se evaluó un conjunto de 310 inhibidores reportados contra 100 conformaciones proteicas (derivadas de 4 estructuras cristalográficas: 1E9Y, 1E9Z, 6QSU, 6ZJA), analizando la correlación entre las energías de unión predichas y los valores experimentales de pIC₅₀ reportados en la literatura.
 
-🧬 Objetivos
+🧬 **Objetivos**
 
 Objetivo General
 
