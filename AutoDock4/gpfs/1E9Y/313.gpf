@@ -1,0 +1,16 @@
+parameter_file AD4.1_bound_Ni.dat
+npts 40 40 40                        # num.grid points in xyz
+gridfld 313.maps.fld                 # grid_data_file
+spacing 0.375                        # spacing(A)
+receptor_types A C H HD N NA Ni OA SA # receptor atom types
+ligand_types C OA HD N               # ligand atom types
+receptor 313.pdbqt                   # macromolecule
+gridcenter -26 -6 -12     # xyz-coordinates or auto
+smooth 0.5                           # store minimum energy w/in rad(A)
+map 313.C.map                        # atom-specific affinity map
+map 313.OA.map                       # atom-specific affinity map
+map 313.HD.map                       # atom-specific affinity map
+map 313.N.map                        # atom-specific affinity map
+elecmap 313.e.map                    # electrostatic potential map
+dsolvmap 313.d.map              # desolvation potential map
+dielectric -0.1465                   # <0, AD4 distance-dep.diel;>0, constant

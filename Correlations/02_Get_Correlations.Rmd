@@ -1,0 +1,1919 @@
+---
+title: "Comparative Data Analysis of Virtual Screening
+Methodologies for Predicting Urease Inhibitory Activity"
+output: html_notebook
+---
+
+## **Data Fusion Methods**
+
+```{r}
+# Load necessary library
+library(dplyr)
+
+# Function to calculate Median
+median_value <- function(data, energy_col) {
+  data %>%
+    group_by(Title) %>%
+    summarise(!!energy_col := median(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+# Function to calculate Minimum Value (now considering pose)
+minimum_value <- function(data, energy_col, pose) {
+  data %>%
+    filter(Poses == pose) %>%  
+    select(Title, !!energy_col)  
+}
+
+# Function to calculate Arithmetic Mean
+arithmetic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Title) %>%
+    summarise(!!energy_col := mean(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+# Function to calculate Geometric Mean
+geometric_mean <- function(data, energy_col) {
+ data %>%
+   group_by(Title) %>%
+   summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) *
+               exp(mean(log(abs(.data[[energy_col]])), na.rm = TRUE)), .groups = "drop")
+}
+
+# Function to calculate Harmonic Mean
+harmonic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Title) %>%
+    summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                (n() / sum(1 / abs(.data[[energy_col]]), na.rm = TRUE)), .groups = "drop")
+}
+
+# Function to calculate Euclidean Mean
+euclidean_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Title) %>%
+    summarise(
+      !!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                      sqrt(sum((.data[[energy_col]])^2, na.rm = TRUE) / n()), 
+      .groups = "drop"
+    )
+}
+```
+
+# **Glide SP & XP**
+
+Need modify:
+
+-   Modify `data_path` from **Load data**:
+
+-   Modify `energy_columns` [docking or MM-GBSA terms] from **Correlation Data Analysis**
+
+-   Modify `output_filename` from **Correlation Data Analysis**
+
+-   Modify `Variant` and `Method` from **Correlation Data Analysis**
+
+### **Load data**
+
+Load data automatically from the data_path
+
+```{r}
+# Leer archivo RDS desde la carpeta Rds
+data_glide <- readRDS("Rds/Glide.rds")
+
+
+# Calculate pIC50 from IC50 (IC50 is in µM, needs to be converted to M)
+# revisar  mutate(pIC50 = -log10(IC50 * 1e-9)) si esta en nM
+data_glide <- data_glide %>% mutate(pIC50 = -log10(IC50 * 1e-9))
+    
+# Add protein name as a new column
+data_glide <- data_glide %>% rename(Protein = protein_id)
+data_glide <- data_glide %>% rename(Poses = Pose)
+data_glide <- data_glide %>% rename(Method = category)
+data_glide <- data_glide %>% rename(Frame = frame)
+
+```
+
+### **Verify the number of compounds**
+
+Prints the number of unique compounds for each file
+
+```{r}
+library(dplyr)
+
+# 1) ¿Cuántos compuestos (Title) únicos hay?
+n_compuestos_unicos <- data_glide %>% 
+  distinct(Title) %>% 
+  nrow()
+
+n_compuestos_unicos
+
+##############
+
+# Filas con IC50 faltante
+filas_IC50_NA <- data_glide %>% 
+  filter(is.na(IC50))
+
+n_filas_IC50_NA <- nrow(filas_IC50_NA)
+
+# Número de compuestos (Title) que tienen al menos un IC50 faltante
+n_compuestos_IC50_NA <- filas_IC50_NA %>% 
+  distinct(Title) %>% 
+  nrow()
+
+n_filas_IC50_NA
+n_compuestos_IC50_NA
+
+
+####################
+n_before <- nrow(data_glide)
+
+# Opción 1: Usando mutate + ifelse (Estándar dplyr)
+data_glide <- data_glide %>%
+  mutate(IC50 = ifelse(is.na(IC50), 320000, IC50))
+
+# Opción 2: Usando replace_na (Más legible, requiere tidyr)
+# data_glide <- data_glide %>%
+#   mutate(IC50 = replace_na(IC50, 320000))
+
+n_after <- nrow(data_glide)
+
+cat("Filas antes:", n_before, "\n")
+cat("Filas después (deben ser iguales):", n_after, "\n")
+
+# Verificamos que ya no queden NAs
+n_nas_restantes <- sum(is.na(data_glide$IC50))
+cat("Número de IC50 con NA restantes:", n_nas_restantes, "\n") # Debería ser 0
+
+#####################
+# AHORA SÍ PUEDES SEGUIR CON TU SPLIT
+#####################
+
+glide_sp <- data_glide %>% 
+  filter(Method == "SP")
+
+glide_xp <- data_glide %>% 
+  filter(Method == "XP")
+```
+
+### Correlation Data Analysis for SP
+
+En el code falta agregar los Frames
+
+```{r}
+
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+# IRM: Inlier Ratio Metric 
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Funciones de Data Fusion (asumo que ya las tienes definidas)
+# -------------------------
+# Ejemplos de firmas esperadas:
+# median_value(data, energy_col)
+# minimum_value(data, energy_col, pose)
+# arithmetic_mean(data, energy_col)
+# geometric_mean(data, energy_col)
+# harmonic_mean(data, energy_col)
+# euclidean_mean(data, energy_col)
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_Glide_SP.xlsx"
+
+Variant <- "1_1"
+Method  <- "SP"   # porque estás trabajando con glide_sp
+
+energy_columns <- c(
+  "docking.score", "glide.ligand.efficiency", 
+  "glide.gscore", "glide.emodel", 
+  "glide.energy", "glide.einternal"
+)
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1  # Dejar un núcleo libre
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_frame <- glide_sp %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  counter <- 0
+  
+  for (fusion_method in fusion_methods) {
+    
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      filtered_data <- data_frame %>% filter(Poses <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Title"]
+        
+        # Unir con datos experimentales
+        merged_data <- fused_data %>%
+          left_join(
+            data_frame %>%
+              select(Title, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Title"
+          )
+        
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          
+          if (n_used < 3) {
+            result_row <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          } else {
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            result_row <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- result_row
+          counter <- counter + 1
+        }
+      }
+    }
+  }
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- glide_sp %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,  # Barra de progreso
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_sp_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_sp_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
+
+### Correlation Data Analysis for XP
+
+En el code falta agregar los Frames
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+# IRM: Inlier Ratio Metric 
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Funciones de Data Fusion
+# -------------------------
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_Glide_XP.xlsx"
+
+Variant <- "1_1"
+Method  <- "XP"
+
+energy_columns <- c(
+  "docking.score", "glide.ligand.efficiency", 
+  "glide.gscore", "glide.emodel", 
+  "glide.energy", "glide.einternal"
+)
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1  # Dejar un núcleo libre
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Dataframe para resultados - CON FRAME
+# -------------------------
+
+results_xp_df <- data.frame(
+  Protein     = character(),
+  Frame       = integer(),  # Agregamos Frame
+  ExpVariable = character(),
+  DataFusion  = character(),
+  EnergyTerm  = character(),
+  Pose        = integer(),
+  Pearson     = numeric(),
+  Spearman    = numeric(),
+  MAE         = numeric(),
+  RMSE        = numeric(),
+  IRM         = numeric(),
+  N           = integer(),
+  Variant     = character(),
+  Method      = character(),
+  stringsAsFactors = FALSE
+)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_frame <- glide_xp %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  
+  for (fusion_method in fusion_methods) {
+    
+    # Para Minimum quieres empezar en pose 1, para el resto en 2
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      # Filtrar por número máximo de poses
+      filtered_data <- data_frame %>%
+        filter(Poses <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        # Detectar columna de energía fusionada (la que no es Title)
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Title"]
+        
+        # Unir con datos experimentales (IC50, pIC50) de esa proteína
+        merged_data <- fused_data %>%
+          left_join(
+            data_frame %>%
+              select(Title, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Title"
+          )
+        
+        # Iterar sobre IC50 y pIC50
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          
+          if (n_used < 3) {
+            
+            pose_xp_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,  # ¡ASIGNAR FRAME!
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+            
+          } else {
+            
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            pose_xp_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,  # ¡ASIGNAR FRAME!
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- pose_xp_df
+        } # fin loop exp_variable
+      }   # fin loop energy_col
+    }     # fin loop poses
+  }       # fin loop fusion_method
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- glide_xp %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo para XP...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,  # Barra de progreso
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_xp_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_xp_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
+
+```{r}
+#robar el valor de IC50 de cada compuesto para VINA y Autodock, el problema que se puede generar es que VINA/Autodock tenga compuestos que no aparecieron en los outputs de glide, y por lo tanto no tengamos el valor exp
+
+unique_IC50 <- data_glide %>% 
+  select(Title, IC50) %>% 
+  distinct()
+```
+
+# **VINA**
+
+```{r}
+# Leer archivo RDS desde la carpeta Rds
+data_vina <- readRDS("Rds/Vina.rds")
+
+# Hacer el join para agregar IC50 desde unique_IC50
+# Ligand (en data_vina) = Title (en unique_IC50)
+data_vina <- data_vina %>%
+  left_join(unique_IC50, by = c("Ligand" = "Title"))
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_vina$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_vina$IC50)), "\n")
+
+# Remover ligandos sin IC50 (opcional)
+data_vina <- data_vina %>% filter(!is.na(IC50))
+
+# Calculate pIC50 from IC50 (IC50 is in µM, needs to be converted to M)
+data_vina <- data_vina %>% mutate(pIC50 = -log10(IC50 * 1e-9))
+
+# Verificar resultado
+cat("\nDatos finales de Vina:\n")
+cat("Total de filas:", nrow(data_vina), "\n")
+cat("Ligandos únicos:", n_distinct(data_vina$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_vina$Protein), "\n")
+cat("Frames:", n_distinct(data_vina$Frame), "\n")
+
+head(data_vina)
+
+```
+
+**Verificar número de compuestos**
+
+```{r}
+library(dplyr)
+
+# 1) ¿Cuántos compuestos (Title) únicos hay?
+n_compuestos_unicos_vina <- data_vina %>% 
+  distinct(Ligand) %>% 
+  nrow()
+
+n_compuestos_unicos_vina
+```
+
+**Correlación VINA**
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# Data Fusion Functions
+# -------------------------
+
+median_value <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := median(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+minimum_value <- function(data, energy_col, pose) {
+  data %>%
+    filter(Pose == pose) %>%
+    select(Ligand, !!energy_col)
+}
+
+arithmetic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := mean(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+geometric_mean <- function(data, energy_col) {
+ data %>%
+   group_by(Ligand) %>%
+   summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) *
+               exp(mean(log(abs(.data[[energy_col]])), na.rm = TRUE)), .groups = "drop")
+}
+
+harmonic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                (n() / sum(1 / abs(.data[[energy_col]]), na.rm = TRUE)), .groups = "drop")
+}
+
+euclidean_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(
+      !!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                      sqrt(sum((.data[[energy_col]])^2, na.rm = TRUE) / n()), 
+      .groups = "drop"
+    )
+}
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Load and Prepare Data
+# -------------------------
+
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_vina$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_vina$IC50)), "\n")
+
+# Remover ligandos sin IC50
+n_before <- nrow(data_vina)
+data_vina <- data_vina %>% filter(!is.na(IC50))
+n_after <- nrow(data_vina)
+cat("Filas eliminadas sin IC50:", n_before - n_after, "\n\n")
+
+# Verificar datos finales
+cat("Datos finales de Vina:\n")
+cat("Total de filas:", nrow(data_vina), "\n")
+cat("Ligandos únicos:", n_distinct(data_vina$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_vina$Protein), "\n")
+cat("Frames:", n_distinct(data_vina$Frame), "\n\n")
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_Vina.xlsx"
+
+Variant <- "1_1"
+Method  <- "Vina"
+
+energy_columns <- c("Energy")
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_protein_frame <- data_vina %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  
+  for (fusion_method in fusion_methods) {
+    
+    # Para Minimum empezar en pose 1, para el resto en 2
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      # Filtrar por número máximo de poses
+      filtered_data <- data_protein_frame %>%
+        filter(Pose <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        # Detectar columna de energía fusionada (la que no es Ligand)
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Ligand"]
+        
+        # Unir con datos experimentales (IC50, pIC50)
+        merged_data <- fused_data %>%
+          left_join(
+            data_protein_frame %>%
+              select(Ligand, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Ligand"
+          )
+        
+        # Iterar sobre IC50 y pIC50
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          n_ligands <- n_distinct(valid_data$Ligand)
+          
+          if (n_used < 3) {
+            
+            pose_vina_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+            
+          } else {
+            
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            pose_vina_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- pose_vina_df
+        } # fin loop exp_variable
+      }   # fin loop energy_col
+    }     # fin loop poses
+  }       # fin loop fusion_method
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- data_vina %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo para Vina...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_vina_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_vina_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
+
+**Correlación AD4**
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# Data Fusion Functions
+# -------------------------
+
+median_value <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := median(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+minimum_value <- function(data, energy_col, pose) {
+  data %>%
+    filter(Pose == pose) %>%
+    select(Ligand, !!energy_col)
+}
+
+arithmetic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := mean(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+geometric_mean <- function(data, energy_col) {
+ data %>%
+   group_by(Ligand) %>%
+   summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) *
+               exp(mean(log(abs(.data[[energy_col]])), na.rm = TRUE)), .groups = "drop")
+}
+
+harmonic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                (n() / sum(1 / abs(.data[[energy_col]]), na.rm = TRUE)), .groups = "drop")
+}
+
+euclidean_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(
+      !!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                      sqrt(sum((.data[[energy_col]])^2, na.rm = TRUE) / n()), 
+      .groups = "drop"
+    )
+}
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Load and Prepare Data
+# -------------------------
+
+# Leer archivo RDS desde la carpeta Rds
+data_ad4 <- readRDS("Rds/AD4.rds")
+
+# *** ACTION: Removed the left_join since IC50 is already present ***
+
+# Verificar cuántos ligandos tienen IC50
+# NOTE: Using the existing IC50 column
+cat("Ligandos con IC50:", sum(!is.na(data_ad4$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_ad4$IC50)), "\n")
+
+# Remover ligandos sin IC50
+n_before <- nrow(data_ad4)
+# NOTE: Using the existing IC50 column
+data_ad4 <- data_ad4 %>% filter(!is.na(IC50))
+n_after <- nrow(data_ad4)
+cat("Filas eliminadas sin IC50:", n_before - n_after, "\n\n")
+
+# Calculate pIC50 from IC50 (IC50 is in µM, needs to be converted to M)
+# This step is likely redundant but ensures consistency if the existing pIC50 was wrong.
+# If IC50 is already in µM (1e-6 M), the conversion should use 1e-6, not 1e-9.
+# If IC50 is already in nM (1e-9 M), the calculation is correct.
+data_ad4 <- data_ad4 %>% mutate(pIC50 = -log10(IC50 * 1e-9))
+
+# Verificar datos finales
+cat("Datos finales de AD4:\n")
+cat("Total de filas:", nrow(data_ad4), "\n")
+cat("Ligandos únicos:", n_distinct(data_ad4$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_ad4$Protein), "\n")
+cat("Frames:", n_distinct(data_ad4$Frame), "\n\n")
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_AD4.xlsx"
+
+Variant <- "1_1"
+Method  <- "AD4"
+
+energy_columns <- c("Energy")
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_protein_frame <- data_ad4 %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  
+  for (fusion_method in fusion_methods) {
+    
+    # Para Minimum empezar en pose 1, para el resto en 2
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      # Filtrar por número máximo de poses
+      filtered_data <- data_protein_frame %>%
+        filter(Pose <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        # Detectar columna de energía fusionada (la que no es Ligand)
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Ligand"]
+        
+        # Unir con datos experimentales (IC50, pIC50)
+        merged_data <- fused_data %>%
+          left_join(
+            data_protein_frame %>%
+              select(Ligand, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Ligand"
+          )
+        
+        # Iterar sobre IC50 y pIC50
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          n_ligands <- n_distinct(valid_data$Ligand)
+          
+          if (n_used < 3) {
+            
+            pose_ad4_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+            
+          } else {
+            
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            pose_ad4_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- pose_ad4_df
+        } # fin loop exp_variable
+      }   # fin loop energy_col
+    }     # fin loop poses
+  }       # fin loop fusion_method
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- data_ad4 %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo para AD4...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_ad4_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_ad4_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
+
+```{r}
+# Leer archivo RDS desde la carpeta Rds
+data_gnina <- readRDS("Rds/GNINA.rds")
+
+# Hacer el join para agregar IC50 desde unique_IC50
+# Ligand (en data_vina) = Title (en unique_IC50)
+data_gnina <- data_gnina %>%
+  left_join(unique_IC50, by = c("Ligand" = "Title"))
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_gnina$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_gnina$IC50)), "\n")
+
+# Remover ligandos sin IC50 (opcional)
+data_gnina <- data_gnina %>% filter(!is.na(IC50))
+
+# Calculate pIC50 from IC50 (IC50 is in µM, needs to be converted to M)
+data_gnina <- data_gnina %>% mutate(pIC50 = -log10(IC50 * 1e-9))
+
+# Verificar resultado
+cat("\nDatos finales de Gnina:\n")
+cat("Total de filas:", nrow(data_gnina), "\n")
+cat("Ligandos únicos:", n_distinct(data_gnina$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_gnina$Protein), "\n")
+cat("Frames:", n_distinct(data_gnina$Frame), "\n")
+
+head(data_gnina)
+
+```
+
+Correlation GNINA
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# Data Fusion Functions
+# -------------------------
+
+median_value <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := median(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+minimum_value <- function(data, energy_col, pose) {
+  data %>%
+    filter(Pose == pose) %>%
+    select(Ligand, !!energy_col)
+}
+
+arithmetic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := mean(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+geometric_mean <- function(data, energy_col) {
+ data %>%
+   group_by(Ligand) %>%
+   summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) *
+               exp(mean(log(abs(.data[[energy_col]])), na.rm = TRUE)), .groups = "drop")
+}
+
+harmonic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                (n() / sum(1 / abs(.data[[energy_col]]), na.rm = TRUE)), .groups = "drop")
+}
+
+euclidean_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(
+      !!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                      sqrt(sum((.data[[energy_col]])^2, na.rm = TRUE) / n()), 
+      .groups = "drop"
+    )
+}
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Load and Prepare Data
+# -------------------------
+
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_gnina$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_gnina$IC50)), "\n")
+
+# Remover ligandos sin IC50
+n_before <- nrow(data_gnina)
+data_gnina <- data_gnina %>% filter(!is.na(IC50))
+n_after <- nrow(data_gnina)
+cat("Filas eliminadas sin IC50:", n_before - n_after, "\n\n")
+
+# Verificar datos finales
+cat("Datos finales de Gnina:\n")
+cat("Total de filas:", nrow(data_gnina), "\n")
+cat("Ligandos únicos:", n_distinct(data_gnina$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_gnina$Protein), "\n")
+cat("Frames:", n_distinct(data_gnina$Frame), "\n\n")
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_Vina.xlsx"
+
+Variant <- "1_1"
+Method  <- "GNINA"
+
+energy_columns <- c("Energy")
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_protein_frame <- data_gnina %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  
+  for (fusion_method in fusion_methods) {
+    
+    # Para Minimum empezar en pose 1, para el resto en 2
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      # Filtrar por número máximo de poses
+      filtered_data <- data_protein_frame %>%
+        filter(Pose <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        # Detectar columna de energía fusionada (la que no es Ligand)
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Ligand"]
+        
+        # Unir con datos experimentales (IC50, pIC50)
+        merged_data <- fused_data %>%
+          left_join(
+            data_protein_frame %>%
+              select(Ligand, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Ligand"
+          )
+        
+        # Iterar sobre IC50 y pIC50
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          n_ligands <- n_distinct(valid_data$Ligand)
+          
+          if (n_used < 3) {
+            
+            pose_gnina_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+            
+          } else {
+            
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            pose_gnina_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- pose_gnina_df
+        } # fin loop exp_variable
+      }   # fin loop energy_col
+    }     # fin loop poses
+  }       # fin loop fusion_method
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- data_gnina %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo para GNINA...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_gnina_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_vina_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
+
+gnina_cnn
+
+```{r}
+# Leer archivo RDS desde la carpeta Rds
+data_gnina_cnn <- readRDS("Rds/GNINA_CNN.rds")
+
+# Hacer el join para agregar IC50 desde unique_IC50
+# Ligand (en data_vina) = Title (en unique_IC50)
+data_gnina_cnn <- data_gnina_cnn %>%
+  left_join(unique_IC50, by = c("Ligand" = "Title"))
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_gnina_cnn$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_gnina_cnn$IC50)), "\n")
+
+# Remover ligandos sin IC50 (opcional)
+data_gnina_cnn <- data_gnina_cnn %>% filter(!is.na(IC50))
+
+# Calculate pIC50 from IC50 (IC50 is in µM, needs to be converted to M)
+data_gnina_cnn <- data_gnina_cnn %>% mutate(pIC50 = -log10(IC50 * 1e-9))
+
+# Verificar resultado
+cat("\nDatos finales de Gnina CNN:\n")
+cat("Total de filas:", nrow(data_gnina_cnn), "\n")
+cat("Ligandos únicos:", n_distinct(data_gnina_cnn$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_gnina_cnn$Protein), "\n")
+cat("Frames:", n_distinct(data_gnina_cnn$Frame), "\n")
+
+head(data_gnina_cnn)
+```
+
+correlation gnina_cnn
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(furrr)
+library(purrr)
+library(openxlsx)
+
+# -------------------------
+# Data Fusion Functions
+# -------------------------
+
+median_value <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := median(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+minimum_value <- function(data, energy_col, pose) {
+  data %>%
+    filter(Pose == pose) %>%
+    select(Ligand, !!energy_col)
+}
+
+arithmetic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := mean(.data[[energy_col]], na.rm = TRUE), .groups = "drop")
+}
+
+geometric_mean <- function(data, energy_col) {
+ data %>%
+   group_by(Ligand) %>%
+   summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) *
+               exp(mean(log(abs(.data[[energy_col]])), na.rm = TRUE)), .groups = "drop")
+}
+
+harmonic_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(!!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                (n() / sum(1 / abs(.data[[energy_col]]), na.rm = TRUE)), .groups = "drop")
+}
+
+euclidean_mean <- function(data, energy_col) {
+  data %>%
+    group_by(Ligand) %>%
+    summarise(
+      !!energy_col := sign(mean(.data[[energy_col]], na.rm = TRUE)) * 
+                      sqrt(sum((.data[[energy_col]])^2, na.rm = TRUE) / n()), 
+      .groups = "drop"
+    )
+}
+
+apply_data_fusion <- function(data, method, energy_col, pose = NULL) {
+  if (method == "Median") {
+    return(median_value(data, energy_col))
+  } else if (method == "Minimum") {
+    return(minimum_value(data, energy_col, pose))  
+  } else if (method == "Arithmetic") {
+    return(arithmetic_mean(data, energy_col))
+  } else if (method == "Geometric") {
+    return(geometric_mean(data, energy_col))
+  } else if (method == "Harmonic") {
+    return(harmonic_mean(data, energy_col))
+  } else if (method == "Euclidean") {
+    return(euclidean_mean(data, energy_col))
+  } else {
+    stop("Invalid Data Fusion Method")
+  }
+}
+
+# -------------------------
+# IRM Function
+# -------------------------
+
+calculate_irm <- function(actual, predicted, threshold = 1.0) {
+  mean(abs(actual - predicted) <= threshold, na.rm = TRUE)  
+}
+
+# -------------------------
+# Load and Prepare Data
+# -------------------------
+
+
+# Verificar cuántos ligandos tienen IC50
+cat("Ligandos con IC50:", sum(!is.na(data_gnina_cnn$IC50)), "\n")
+cat("Ligandos sin IC50:", sum(is.na(data_gnina_cnn$IC50)), "\n")
+
+# Remover ligandos sin IC50
+n_before <- nrow(data_gnina_cnn)
+data_gnina_cnn <- data_gnina_cnn %>% filter(!is.na(IC50))
+n_after <- nrow(data_gnina_cnn)
+cat("Filas eliminadas sin IC50:", n_before - n_after, "\n\n")
+
+# Verificar datos finales
+cat("Datos finales de Gnina CNN:\n")
+cat("Total de filas:", nrow(data_gnina_cnn), "\n")
+cat("Ligandos únicos:", n_distinct(data_gnina_cnn$Ligand), "\n")
+cat("Proteínas:", n_distinct(data_gnina_cnn$Protein), "\n")
+cat("Frames:", n_distinct(data_gnina_cnn$Frame), "\n\n")
+
+# -------------------------
+# User Configuration
+# -------------------------
+
+output_filename <- "Correlation_Vina.xlsx"
+
+Variant <- "1_1"
+Method  <- "GNINA_CNN"
+
+energy_columns <- c("Energy")
+
+exp_variables <- c("IC50", "pIC50")
+
+fusion_methods <- c("Median", "Minimum", "Arithmetic", "Geometric", "Harmonic", "Euclidean")
+
+# -------------------------
+# Configuración de paralelización
+# -------------------------
+available_cores <- availableCores() - 1
+cat("Usando", available_cores, "núcleos para procesamiento paralelo\n")
+plan(multisession, workers = available_cores)
+
+# -------------------------
+# Función para procesar UNA combinación proteína-frame
+# -------------------------
+process_protein_frame <- function(protein_frame_combo) {
+  
+  protein_name <- protein_frame_combo$protein
+  frame_name <- protein_frame_combo$frame
+  
+  # Subconjunto por proteína y frame
+  data_protein_frame <- data_gnina_cnn %>% 
+    filter(Protein == protein_name, Frame == frame_name)
+  
+  results_list <- list()
+  
+  for (fusion_method in fusion_methods) {
+    
+    # Para Minimum empezar en pose 1, para el resto en 2
+    start_pose <- ifelse(fusion_method == "Minimum", 1, 2)
+    
+    for (i in start_pose:10) {
+      
+      # Filtrar por número máximo de poses
+      filtered_data <- data_protein_frame %>%
+        filter(Pose <= i)
+      
+      for (energy_col in energy_columns) {
+        
+        # Aplicar Data Fusion
+        if (fusion_method == "Minimum") {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col, pose = i)
+        } else {
+          fused_data <- apply_data_fusion(filtered_data, fusion_method, energy_col)
+        }
+        
+        # Detectar columna de energía fusionada (la que no es Ligand)
+        fusion_col_name <- colnames(fused_data)[colnames(fused_data) != "Ligand"]
+        
+        # Unir con datos experimentales (IC50, pIC50)
+        merged_data <- fused_data %>%
+          left_join(
+            data_protein_frame %>%
+              select(Ligand, all_of(exp_variables)) %>%
+              distinct(),
+            by = "Ligand"
+          )
+        
+        # Iterar sobre IC50 y pIC50
+        for (exp_variable in exp_variables) {
+          
+          valid_data <- merged_data %>%
+            filter(!is.na(.data[[exp_variable]]) & !is.na(.data[[fusion_col_name]]))
+          
+          n_used <- nrow(valid_data)
+          n_ligands <- n_distinct(valid_data$Ligand)
+          
+          if (n_used < 3) {
+            
+            pose_gnina_cnn_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = NA,
+              Spearman    = NA,
+              MAE         = NA,
+              RMSE        = NA,
+              IRM         = NA,
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+            
+          } else {
+            
+            cor_pearson  <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs")
+            cor_spearman <- cor(valid_data[[exp_variable]],
+                                valid_data[[fusion_col_name]],
+                                use = "complete.obs",
+                                method = "spearman")
+            mae_value <- mean(abs(valid_data[[exp_variable]] - valid_data[[fusion_col_name]]),
+                              na.rm = TRUE)
+            rmse_value <- sqrt(mean((valid_data[[exp_variable]] - valid_data[[fusion_col_name]])^2,
+                                    na.rm = TRUE))
+            irm_value <- calculate_irm(valid_data[[exp_variable]],
+                                       valid_data[[fusion_col_name]])
+            
+            pose_gnina_cnn_df <- data.frame(
+              Protein     = protein_name,
+              Frame       = frame_name,
+              ExpVariable = exp_variable,
+              DataFusion  = fusion_method,
+              EnergyTerm  = energy_col,
+              Pose        = i,
+              Pearson     = round(cor_pearson, 3),
+              Spearman    = round(cor_spearman, 3),
+              MAE         = round(mae_value, 3),
+              RMSE        = round(rmse_value, 3),
+              IRM         = round(irm_value, 3),
+              N           = n_used,
+              N_Ligands   = n_ligands,
+              Variant     = Variant,
+              Method      = Method,
+              stringsAsFactors = FALSE
+            )
+          }
+          
+          results_list[[length(results_list) + 1]] <- pose_gnina_cnn_df
+        } # fin loop exp_variable
+      }   # fin loop energy_col
+    }     # fin loop poses
+  }       # fin loop fusion_method
+  
+  # Devolver todos los resultados para esta combinación proteína-frame
+  return(bind_rows(results_list))
+}
+
+# -------------------------
+# Preparar todas las combinaciones proteína-frame
+# -------------------------
+protein_frame_combos <- data_gnina_cnn %>%
+  distinct(Protein, Frame) %>%
+  {map2(.$Protein, .$Frame, ~ list(protein = .x, frame = .y))}
+
+cat("Total de combinaciones a procesar:", length(protein_frame_combos), "\n")
+cat("Esto tomará aproximadamente", length(protein_frame_combos) / available_cores, 
+    "iteraciones por núcleo\n")
+
+# -------------------------
+# Ejecutar en paralelo con barra de progreso
+# -------------------------
+cat("Iniciando procesamiento paralelo para GNINA...\n")
+start_time <- Sys.time()
+
+results_list <- future_map(
+  protein_frame_combos,
+  ~ process_protein_frame(.x),
+  .progress = TRUE,
+  .options = furrr_options(seed = TRUE)
+)
+
+end_time <- Sys.time()
+cat("Tiempo de ejecución:", round(end_time - start_time, 2), "segundos\n")
+
+# -------------------------
+# Combinar todos los resultados
+# -------------------------
+results_gnina_cnn_df <- bind_rows(results_list)
+
+# -------------------------
+# Guardar resultados
+# -------------------------
+#write.xlsx(results_vina_df, output_filename)
+#cat("Resultados guardados en:", output_filename, "\n")
+
+# Limpiar
+plan(sequential)
+```
