@@ -1,0 +1,6 @@
+GRIDFILE /home/db/Documentos/David_Hito2/Glide/grids_frames_glide/
+LIGANDFILE /home/db/Documentos/David_Hito2/Glide/ligprep_1/ligprep_1-out.maegz
+PRECISION SP
+POSES_PER_LIG 10
+POSTDOCK_NPOSE 10
+WRITEREPT YES

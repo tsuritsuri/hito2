@@ -1,0 +1,39 @@
+REMARK  5 active torsions:
+REMARK  status: ('A' for Active; 'I' for Inactive)
+REMARK    1  A    between atoms: C_2  and  C_3 
+REMARK       I    between atoms: C_2  and  N_14 
+REMARK    2  A    between atoms: C_3  and  C_4 
+REMARK    3  A    between atoms: C_4  and  N_5 
+REMARK    4  A    between atoms: N_5  and  C_6 
+REMARK    5  A    between atoms: N_14  and  O_15 
+ROOT
+HETATM    1  N   UNL     1       2.837  -3.638   0.422  1.00  0.00    -0.291 NA
+HETATM    2  H   UNL     1       3.636  -3.614   1.060  1.00  0.00     0.127 HD
+ENDROOT
+BRANCH   1   3
+HETATM    3  C   UNL     1       2.107  -2.369   0.350  1.00  0.00     0.102 C 
+BRANCH   3   4
+HETATM    4  C   UNL     1       3.068  -1.213   0.106  1.00  0.00     0.119 C 
+BRANCH   4   5
+HETATM    5  C   UNL     1       2.313   0.093   0.034  1.00  0.00     0.242 C 
+HETATM    6  O   UNL     1       1.094   0.202   0.157  1.00  0.00    -0.271 OA
+HETATM    7  N   UNL     1       3.120   1.181  -0.183  1.00  0.00    -0.237 N 
+HETATM    8  H   UNL     1       4.120   1.148  -0.347  1.00  0.00     0.197 HD
+BRANCH   7   9
+HETATM    9  O   UNL     1       2.488   2.438  -0.281  1.00  0.00    -0.287 OA
+HETATM   10  H   UNL     1       1.540   2.212  -0.159  1.00  0.00     0.244 HD
+ENDBRANCH   7   9
+ENDBRANCH   4   5
+ENDBRANCH   3   4
+ENDBRANCH   1   3
+BRANCH   1  11
+HETATM   11  C   UNL     1       2.092  -4.816   0.651  1.00  0.00     0.030 A 
+HETATM   12  C   UNL     1       0.777  -4.966   0.185  1.00  0.00     0.027 A 
+HETATM   13  C   UNL     1       0.072  -6.162   0.360  1.00  0.00     0.026 A 
+HETATM   14  C   UNL     1       0.686  -7.245   0.980  1.00  0.00     0.035 A 
+HETATM   15 CL   UNL     1      -0.187  -8.711   1.191  1.00  0.00    -0.084 Cl
+HETATM   16  C   UNL     1       2.002  -7.149   1.418  1.00  0.00     0.049 A 
+HETATM   17  C   UNL     1       2.699  -5.949   1.242  1.00  0.00     0.056 A 
+HETATM   18 CL   UNL     1       4.336  -5.876   1.807  1.00  0.00    -0.082 Cl
+ENDBRANCH   1  11
+TORSDOF 5
