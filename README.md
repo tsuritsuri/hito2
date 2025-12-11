@@ -1,3 +1,5 @@
+Hito 2
+
 Benchmark de programas de docking y protocolos integrados con aprendizaje profundo en inhibidores de ureasa de Helicobacter pylori
 
 Este repositorio contiene los datos, scripts y resultados del Trabajo Docente Investigativo realizado como parte del Grado de Licenciado en Bioingeniería Médica en la Universidad Católica del Maule, Facultad de Medicina, Escuela de Bioingeniería Médica.
